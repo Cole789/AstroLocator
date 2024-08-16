@@ -3,6 +3,7 @@
   <img src="https://github.com/Cole789/AstroLocator/blob/master/AstroLocater.png" alt="Logo">
 </div>
 
+## What is AstroLocator?
 AstroLocator is a Python program designed to compute and display the positions of planets and other celestial objects. It offers a user-friendly console interface to interact with various astronomical data.
 
 ## Features
