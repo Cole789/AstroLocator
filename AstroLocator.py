@@ -22,8 +22,8 @@ uranus = eph['uranus barycenter']
 neptune = eph['neptune barycenter']
 
 # Define observer's location
-userLat = 39.8465
-userLong = -82.8114
+userLat = 51.4779
+userLong = -0.0015
 observer = earth + Topos(latitude_degrees=userLat, longitude_degrees=userLong)
 
 # UI Elements
