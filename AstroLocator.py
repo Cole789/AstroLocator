@@ -1,130 +1,96 @@
-import keyboard
-from skyfield.api import load, Topos
-from colorama import init, Fore, Back, Style
-import time  # Import time for time-related functions
+"""Line-oriented console interface for AstroLocator"""
 
-# Initialize Colorama
-init()
+import argparse
+import sys
 
-# DATA
+from skyfield.api import load
+from coordinates import TARGETS, calculate_position, load_ephemeris, validate_coordinate
 
-# Load ephemeris data for objects
-ts = load.timescale()
-eph = load('de421.bsp')
-earth = eph['earth']
-moon = eph['moon']
-mercury = eph['mercury']
-venus = eph['venus']
-mars = eph['mars']
-jupiter = eph['jupiter barycenter']
-saturn = eph['saturn barycenter']
-uranus = eph['uranus barycenter']
-neptune = eph['neptune barycenter']
+# Creates a command-line parser that checks whether a coordinate is valid
+def coordinate_argument(name):
+    def parse(value):
+        try:
+            return validate_coordinate(value, name)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(str(exc)) from exc
+    return parse
 
-# Define observer's location
-userLat = 51.4779
-userLong = -0.0015
-observer = earth + Topos(latitude_degrees=userLat, longitude_degrees=userLong)
+# Resolves a refresh, navigation command, or case-insensitive target name
+def select_target(command, current):    
+    command = command.strip().lower()
+    names = list(TARGETS)
+    if not command:
+        return current
+    if command in ("n", "p"):
+        step = 1 if command == "n" else -1
+        return names[(names.index(current) + step) % len(names)]
+    for name in names:
+        if command == name.lower():
+            return name
+    raise ValueError("Unknown command. Enter a target name, n, p, Enter, or q.")
 
-# UI Elements
-objects = ["Moon", "Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune"]
-bodies = {
-    "Moon": moon,
-    "Mercury": mercury,
-    "Venus": venus,
-    "Mars": mars,
-    "Jupiter": jupiter,
-    "Saturn": saturn,
-    "Uranus": uranus,
-    "Neptune": neptune
-}
-currentIndex = 0
-statusMessage = ""
-screenWidth = 110
+# Asks for a valid coordinate and lets the user quit if needed
+def prompt_coordinate(name):
+    while True:
+        value = input(f"Observer {name} in decimal degrees (q to quit): ").strip()
+        if value.lower() in ("q", "quit"):
+            return None
+        try:
+            return validate_coordinate(value, name)
+        except ValueError as exc:
+            print(exc)
 
-# Time tracking
-last_seconds = -1  # Initialize with an invalid value to ensure the first update
+# Runs the interactive console for viewing target positions
+def run_console(ephemeris, timescale, latitude, longitude):
+    print("AstroLocator | Latitude / Longitude: " f"{latitude:.4f}, {longitude:.4f} degrees")
+    print("Targets: " + ", ".join(TARGETS))
+    print("Enter: refresh | n/p: next/previous | target name: select | q: quit")
+    target = "Moon" # Default target
+    while True:
+        instant = timescale.now()
+        altitude, azimuth = calculate_position(
+            ephemeris, instant, latitude, longitude, target
+        )
+        print(f"{instant.utc_strftime('%Y-%m-%d %H:%M:%S UTC')} | {target} | " f"Altitude: {altitude:.2f} deg | Azimuth: {azimuth:.2f} deg")\
+        while True:
+            command = input("> ").strip()
+            if command.lower() in ("q", "quit"):
+                return
+            try:
+                target = select_target(command, target)
+                break
+            except ValueError as exc:
+                print(exc)
 
-def drawUI():
-    # Clear screen
-    print("\033c", end="")
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Calculate Moon and planet altitude/azimuth.")
+    parser.add_argument("--latitude", type=coordinate_argument("latitude"), help="Decimal degrees, -90 to 90; north is positive")
+    parser.add_argument("--longitude", type=coordinate_argument("longitude"), help="Decimal degrees, -180 to 180; east is positive")
+    parser.add_argument("--ephemeris", help="Path to a local DE421 BSP file")
+    args = parser.parse_args(argv)
+    ephemeris = None
+    try:
+        latitude = args.latitude
+        longitude = args.longitude
+        if latitude is None:
+            latitude = prompt_coordinate("latitude")
+        if latitude is None:
+            return 0
+        if longitude is None:
+            longitude = prompt_coordinate("longitude")
+        if longitude is None:
+            return 0
+        ephemeris = load_ephemeris(args.ephemeris)
+        run_console(ephemeris, load.timescale(builtin=True), latitude, longitude)
+    except (KeyboardInterrupt, EOFError):
+        print("\nGoodbye.")
+    except (OSError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if ephemeris is not None:
+            ephemeris.close()
+    return 0
 
-    # Get current time
-    t = ts.now()
-    current_seconds = t.utc_strftime('%S')
-
-    # Header Lines
-    print("------------------[ Long / Lat ]---------------------|---------------------[ UTC Time ]--------------------")
-    print("                 " + f"{userLat:.4f}, {userLong:.4f} {t.utc_strftime('%H:%M:%S'):>50}")
-    print("--------------------------------------------[ Selected Object ]--------------------------------------------")
-    print("")
-
-    # Display objects and highlight the selected one
-    # Center the object list
-    object_line = "   ".join(objects)
-    padding = (screenWidth - len(object_line)) // 2
-    highlighted_line = " " * padding
-
-    for i, obj in enumerate(objects):
-        if i == currentIndex:
-            highlighted_line += Back.WHITE + Fore.BLACK + obj + Style.RESET_ALL + "   "
-        else:
-            highlighted_line += obj + "   "
-    
-    print(highlighted_line)
-
-    # Footer line with status
-    print("")
-    print("------------------------------------------------[ Status ]-------------------------------------------------")
-    if statusMessage:
-        print(">" + f"{statusMessage}".center(screenWidth))
-    else:
-        print(" ".center(screenWidth))
-
-def calculatePositionOfObject():
-    global statusMessage
-    t = ts.now()  # Refresh the time
-    selected_object = objects[currentIndex]
-    statusMessage = f"Calculating position of {selected_object}"
-    drawUI()
-    
-    # Get the Skyfield body for the selected object
-    body = bodies[selected_object]
-    
-    # Get the position of Selected Object
-    astrometric = observer.at(t).observe(body)
-    alt, az, _ = astrometric.apparent().altaz()
-    
-    # Update status message with altitude and azimuth
-    statusMessage = (f"{selected_object} altitude: {alt.degrees:.2f} degrees | "
-                     f"{selected_object} azimuth: {az.degrees:.2f} degrees")
-    drawUI()
-
-# Initial draw
-drawUI()
-
-# Main loop
-while True:
-    t = ts.now()
-    current_seconds = t.utc_strftime('%S')
-
-    # Update the UI only if the second has changed
-    if current_seconds != last_seconds:
-        drawUI()
-        if objects[currentIndex]:
-            calculatePositionOfObject()
-        last_seconds = current_seconds
-
-    if keyboard.is_pressed('right'):
-        currentIndex = (currentIndex + 1) % len(objects)
-        drawUI()
-        while keyboard.is_pressed('right'): pass  # Wait until the key is released
-    
-    if keyboard.is_pressed('left'):
-        currentIndex = (currentIndex - 1) % len(objects)
-        drawUI()
-        while keyboard.is_pressed('left'): pass  # Wait until the key is released
-    
-    if keyboard.is_pressed('enter'):
-        calculatePositionOfObject()
-        while keyboard.is_pressed('enter'): pass  # Wait until the key is released
+if __name__ == "__main__":
+    sys.exit(main())
