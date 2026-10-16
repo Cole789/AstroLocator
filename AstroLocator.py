@@ -51,7 +51,7 @@ def run_console(ephemeris, timescale, latitude, longitude):
         altitude, azimuth = calculate_position(
             ephemeris, instant, latitude, longitude, target
         )
-        print(f"{instant.utc_strftime('%Y-%m-%d %H:%M:%S UTC')} | {target} | " f"Altitude: {altitude:.2f} deg | Azimuth: {azimuth:.2f} deg")\
+        print(f"{instant.utc_strftime('%Y-%m-%d %H:%M:%S UTC')} | {target} | " f"Altitude: {altitude:.2f} deg | Azimuth: {azimuth:.2f} deg")
         while True:
             command = input("> ").strip()
             if command.lower() in ("q", "quit"):
