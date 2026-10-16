@@ -14,8 +14,6 @@ terminal interface.
 - Configurable latitude and longitude, supplied as arguments or prompted at startup.
 - UTC timestamp and apparent altitude/azimuth for each calculation.
 - Immediate recalculation after target selection. press Enter to refresh manually.
-- Standard terminal input, with no global keyboard hooks, polling, or screen clearing.
-- Local ephemeris loading independent of the current working directory.
 
 ## Install and run
 
