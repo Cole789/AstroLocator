@@ -1,12 +1,12 @@
-"""Line-oriented console interface for AstroLocator"""
-
+"""Line-oriented AstroLocator console: celestial positions and SAFE pointing preview."""
 import argparse
 import sys
 
 from skyfield.api import load
 from coordinates import TARGETS, calculate_position, load_ephemeris, validate_coordinate
+from hardware.pointing import preview_target
 
-# Creates a command-line parser that checks whether a coordinate is valid
+
 def coordinate_argument(name):
     def parse(value):
         try:
@@ -15,8 +15,8 @@ def coordinate_argument(name):
             raise argparse.ArgumentTypeError(str(exc)) from exc
     return parse
 
-# Resolves a refresh, navigation command, or case-insensitive target name
-def select_target(command, current):    
+
+def select_target(command, current):
     command = command.strip().lower()
     names = list(TARGETS)
     if not command:
@@ -29,10 +29,10 @@ def select_target(command, current):
             return name
     raise ValueError("Unknown command. Enter a target name, n, p, Enter, or q.")
 
-# Asks for a valid coordinate and lets the user quit if needed
+
 def prompt_coordinate(name):
     while True:
-        value = input(f"Observer {name} in decimal degrees (q to quit): ").strip()
+        value = input("Observer {} in decimal degrees (q to quit): ".format(name)).strip()
         if value.lower() in ("q", "quit"):
             return None
         try:
@@ -40,18 +40,21 @@ def prompt_coordinate(name):
         except ValueError as exc:
             print(exc)
 
-# Runs the interactive console for viewing target positions
-def run_console(ephemeris, timescale, latitude, longitude):
-    print("AstroLocator | Latitude / Longitude: " f"{latitude:.4f}, {longitude:.4f} degrees")
+
+def run_console(ephemeris, timescale, latitude, longitude, home_azimuth=None):
+    print("AstroLocator | Latitude / Longitude: {:.4f}, {:.4f} degrees".format(latitude, longitude))
     print("Targets: " + ", ".join(TARGETS))
     print("Enter: refresh | n/p: next/previous | target name: select | q: quit")
-    target = "Moon" # Default target
+    print("Pointing preview only: NO GPIO MOVEMENT; LASER OFF")
+    target = "Moon"
     while True:
         instant = timescale.now()
-        altitude, azimuth = calculate_position(
-            ephemeris, instant, latitude, longitude, target
-        )
-        print(f"{instant.utc_strftime('%Y-%m-%d %H:%M:%S UTC')} | {target} | " f"Altitude: {altitude:.2f} deg | Azimuth: {azimuth:.2f} deg")
+        altitude, azimuth = calculate_position(ephemeris, instant, latitude, longitude, target)
+        print("{} | {} | Altitude: {:.2f} deg | Azimuth: {:.2f} deg".format(
+            instant.utc_strftime('%Y-%m-%d %H:%M:%S UTC'), target, altitude, azimuth))
+        status, offset = preview_target(altitude, azimuth, home_azimuth=home_azimuth)
+        print("Pointing preview: {}{}".format(status,
+              " | Azimuth offset: {:+.2f} deg".format(offset) if offset is not None else ""))
         while True:
             command = input("> ").strip()
             if command.lower() in ("q", "quit"):
@@ -62,12 +65,19 @@ def run_console(ephemeris, timescale, latitude, longitude):
             except ValueError as exc:
                 print(exc)
 
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Calculate Moon and planet altitude/azimuth.")
-    parser.add_argument("--latitude", type=coordinate_argument("latitude"), help="Decimal degrees, -90 to 90; north is positive")
-    parser.add_argument("--longitude", type=coordinate_argument("longitude"), help="Decimal degrees, -180 to 180; east is positive")
+    parser = argparse.ArgumentParser(description="Calculate celestial altitude/azimuth without driving motors.")
+    parser.add_argument("--latitude", type=coordinate_argument("latitude"),
+                        help="Decimal degrees, -90 to 90; north positive")
+    parser.add_argument("--longitude", type=coordinate_argument("longitude"),
+                        help="Decimal degrees, -180 to 180; east positive")
     parser.add_argument("--ephemeris", help="Path to a local DE421 BSP file")
+    parser.add_argument("--home-azimuth", type=float,
+                        help="Approximate true bearing (0..360 degrees) of base at 1500 us; preview only")
     args = parser.parse_args(argv)
+    if args.home_azimuth is not None and not 0 <= args.home_azimuth < 360:
+        parser.error("--home-azimuth must be in [0, 360)")
     ephemeris = None
     try:
         latitude = args.latitude
@@ -81,16 +91,17 @@ def main(argv=None):
         if longitude is None:
             return 0
         ephemeris = load_ephemeris(args.ephemeris)
-        run_console(ephemeris, load.timescale(builtin=True), latitude, longitude)
+        run_console(ephemeris, load.timescale(builtin=True), latitude, longitude, args.home_azimuth)
     except (KeyboardInterrupt, EOFError):
         print("\nGoodbye.")
     except (OSError, ValueError) as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        print("Error: {}".format(exc), file=sys.stderr)
         return 1
     finally:
         if ephemeris is not None:
             ephemeris.close()
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())
